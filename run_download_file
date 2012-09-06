@@ -1,0 +1,81 @@
+#!/usr/bin/env ruby -EUTF-8
+# encoding: utf-8
+require 'open-uri'
+require 'timeout'
+require 'nokogiri'
+require 'rtesseract'
+require File.expand_path(File.dirname(__FILE__) + "/../utils/utils")
+require File.expand_path(File.dirname(__FILE__) + "/../utils/optparse")
+require File.expand_path(File.dirname(__FILE__) + "/../logger")
+
+Spider::Utils.load_mongo(SpiderOptions[:environment])
+Spider::Utils.load_models
+
+include Spider::Logger
+
+require 'net/http'
+
+case SpiderOptions[:name] 
+when 'xkb'
+    BaseURL = 'www.xkb1.com'
+else
+end
+
+
+#开始解析
+def start_download(product)
+  puts product.download_url
+      html = open(product.download_url).read
+      html = html.force_encoding("GB2312").encode("UTF-8", :invalid => :replace, :undef => :replace, :replace => "?")
+      doc = Nokogiri::HTML(html)   
+      download_href = doc.css('li a').select{|elem| elem.inner_text =~ /本地下载|下载地址|下载/}.first["href"].strip
+
+
+    file = File.expand_path(File.dirname(__FILE__) + "/../tmp/#{product.id}.rar")
+
+    #system "wget  http://#{BaseURL}#{download_href}"
+    coursePath = "/users/jxbdv2/#{product.course}"
+    gradePath = "/users/jxbdv2/#{product.course}/#{product.grade}"
+    publisherPath = "/users/jxbdv2/#{product.course}/#{product.grade}/#{product.publisher}"
+
+    if !File.directory?(coursePath)
+      Dir.mkdir(coursePath, 0777)
+    end
+
+    if !File.directory?(gradePath)
+      Dir.mkdir(gradePath, 0777)
+    end
+
+    if !File.directory?(publisherPath)
+      Dir.mkdir(publisherPath, 0777)
+    end    
+
+    #system "if [ ! -d #{coursePath} ]; then " + "\n" + "mkdir #{coursePath}" + "\n" + "fi"
+
+    Net::HTTP.start('www.xkb1.com') { |http|
+
+       http.read_timeout = 500
+       resp = http.get(download_href)
+       sreal_url = resp.to_hash["location"][0].to_s
+       puts sreal_url
+       sreal_file = sreal_url.split("/").last
+       file_ext = sreal_file.split(".").last
+       system "wget -P #{publisherPath} http://www.xkb1.com#{sreal_url};cd #{publisherPath};unrar x #{sreal_file};mv #{sreal_file} #{product.id}.#{file_ext}"
+          # resp1 = http.get( resp.to_hash["location"])
+
+          # open(file, 'wb') { |file|
+          #    file.write(resp1.body)
+          # }
+    }  
+
+    product.update_attributes! :downloaded => true
+    puts "downloaded file http://#{BaseURL}#{download_href} done!"
+  rescue Timeout::Error => e
+    puts " timeout error occur"
+
+end
+
+products = Product.from_kind(SpiderOptions[:name]).where(:downloaded => false).limit(SpiderOptions[:number])
+products.each do |product|
+  start_download(product)
+end
